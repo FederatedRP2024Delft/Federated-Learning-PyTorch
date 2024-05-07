@@ -9,6 +9,7 @@ import matplotlib.pyplot as plt
 import torch
 from torch.utils.data import DataLoader
 
+from vae.mnist_vae import VaeAutoencoderClassifier
 from utils import get_dataset
 from options import args_parser
 from update import test_inference
@@ -41,6 +42,8 @@ if __name__ == '__main__':
             len_in *= x
             global_model = MLP(dim_in=len_in, dim_hidden=64,
                                dim_out=args.num_classes)
+    elif args.model == 'vae':
+        global_model = VaeAutoencoderClassifier(dim_encoding=2)
     else:
         exit('Error: unrecognized model')
 
@@ -71,7 +74,10 @@ if __name__ == '__main__':
 
             optimizer.zero_grad()
             outputs = global_model(images)
-            loss = criterion(outputs, labels)
+            if args.model == 'vae' or isinstance(global_model, VaeAutoencoderClassifier):
+                loss = global_model.train_model(trainloader.dataset, epochs=args.local_ep)[1]
+            else:
+                loss = criterion(outputs, labels)
             loss.backward()
             optimizer.step()
 

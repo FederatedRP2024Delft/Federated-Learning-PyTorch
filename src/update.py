@@ -112,7 +112,7 @@ class LocalUpdate(object):
                 loss += complete_loss_fn(images, outputs, model.z_dist, labels)
                 _, pred_labels = torch.max(outputs[1], 1)
                 pred_labels = pred_labels.view(-1)
-                print(f"pred labels: {pred_labels}, labels: {labels}")
+                # print(f"pred labels: {pred_labels}, labels: {labels}")
                 correct += torch.sum(torch.eq(pred_labels, labels)).item()
                 total += len(labels)
             else:
