@@ -66,35 +66,35 @@ if __name__ == '__main__':
     epoch_loss = []
     test_losses = []
     test_accs = []
-    for epoch in tqdm(range(args.epochs)):
-        batch_loss = []
+    if args.model == 'vae' or isinstance(global_model, VaeAutoencoderClassifier):
+        loss_avg = global_model.train_model(trainloader.dataset, epochs=args.epochs)[1]
+    else:
+        for epoch in tqdm(range(args.epochs)):
+            batch_loss = []
 
-        for batch_idx, (images, labels) in enumerate(trainloader):
-            images, labels = images.to(device), labels.to(device)
+            for batch_idx, (images, labels) in enumerate(trainloader):
+                images, labels = images.to(device), labels.to(device)
 
-            optimizer.zero_grad()
-            outputs = global_model(images)
-            if args.model == 'vae' or isinstance(global_model, VaeAutoencoderClassifier):
-                loss = global_model.train_model(trainloader.dataset, epochs=args.local_ep)[1]
-            else:
+                optimizer.zero_grad()
+                outputs = global_model(images)
                 loss = criterion(outputs, labels)
-            loss.backward()
-            optimizer.step()
+                loss.backward()
+                optimizer.step()
 
-            if batch_idx % 50 == 0:
-                print('Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}'.format(
-                    epoch+1, batch_idx * len(images), len(trainloader.dataset),
-                    100. * batch_idx / len(trainloader), loss.item()))
-            batch_loss.append(loss.item())
+                if batch_idx % 50 == 0:
+                    print('Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}'.format(
+                        epoch+1, batch_idx * len(images), len(trainloader.dataset),
+                        100. * batch_idx / len(trainloader), loss.item()))
+                batch_loss.append(loss.item())
 
-        loss_avg = sum(batch_loss)/len(batch_loss)
-        print('\nTrain loss:', loss_avg)
-        epoch_loss.append(loss_avg)
-        test_acc, test_loss = test_inference(args, global_model, test_dataset)
-        test_losses.append(test_loss)
-        test_accs.append(test_acc)
-        print('Test on', len(test_dataset), 'samples')
-        print("Test Accuracy: {:.2f}%".format(100 * test_acc))
+            loss_avg = sum(batch_loss)/len(batch_loss)
+    print('\nTrain loss:', loss_avg)
+    epoch_loss.append(loss_avg)
+    test_acc, test_loss = test_inference(args, global_model, test_dataset)
+    test_losses.append(test_loss)
+    test_accs.append(test_acc)
+    print('Test on', len(test_dataset), 'samples')
+    print("Test Accuracy: {:.2f}%".format(100 * test_acc))
 
     # Plot loss
     plt.figure()
@@ -106,7 +106,8 @@ if __name__ == '__main__':
 
     # testing
     plt.figure()
-    plt.plot(range(len(test_losses)), test_losses)
+    test_losses_np = [tensor.detach().numpy() for tensor in test_losses]
+    plt.plot(range(len(test_losses_np)), test_losses_np)
     plt.xlabel('epochs')
     plt.ylabel('Test loss')
     plt.savefig('../save/nn_test_loss_{}_{}_{}.png'.format(args.dataset, args.model,
