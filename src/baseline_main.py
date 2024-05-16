@@ -23,7 +23,7 @@ if __name__ == '__main__':
     # if args.gpu:
     #     torch.cuda.set_device(args.gpu)
     # device = 'cuda' if args.gpu else 'cpu'
-    device = 'cuda'
+    device = 'cuda:0'
 
     # load datasets
     train_dataset, test_dataset, _ = get_dataset(args)
