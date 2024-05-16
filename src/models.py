@@ -2,9 +2,13 @@
 # -*- coding: utf-8 -*-
 # Python version: 3.6
 
+import torch
+import torchvision
 from torch import nn
 import torch.nn.functional as F
-
+import torch_geometric.nn as pyg_nn
+import torch_geometric.utils as pyg_utils
+import torch_geometric.transforms as T
 
 class MLP(nn.Module):
     def __init__(self, dim_in, dim_hidden, dim_out):
@@ -40,7 +44,8 @@ class CNNMnist(nn.Module):
         x = F.relu(self.fc1(x))
         x = F.dropout(x, training=self.training)
         x = self.fc2(x)
-        return F.log_softmax(x, dim=1)
+        # return F.log_softmax(x, dim=1)
+        return x
 
 
 class CNNFashion_Mnist(nn.Module):
@@ -67,27 +72,177 @@ class CNNFashion_Mnist(nn.Module):
 
 
 class CNNCifar(nn.Module):
-    def __init__(self, args):
+    '''
+    Second CNN is on run command
+    First CNN is in terminal
+    terminal 1 has baseline
+    terminal 2 has federated
+    '''
+
+    # def __init__(self, args):  # 80% accuracy on test set
+    #     super(CNNCifar, self).__init__()
+    #     self.conv1 = nn.Conv2d(3, 64, kernel_size=4, stride=1, padding=0)
+    #     self.conv2 = nn.Conv2d(64, 128, kernel_size=4, stride=1, padding=0)
+    #     self.pool1 = nn.MaxPool2d(kernel_size=2, stride=2, padding=0)
+    #     self.dropout1 = nn.Dropout(0.4)
+    #
+    #     self.conv3 = nn.Conv2d(128, 128, kernel_size=4, stride=1, padding=0)
+    #     self.conv4 = nn.Conv2d(128, 128, kernel_size=4, stride=1, padding=0)
+    #     self.pool2 = nn.MaxPool2d(kernel_size=2, stride=2, padding=0)
+    #     self.dropout2 = nn.Dropout(0.4)
+    #
+    #     self.flatten = nn.Flatten()
+    #     self.fc1 = nn.Linear(128 * 11 * 11, 1024)
+    #     self.fc2 = nn.Linear(1024, 1024)
+    #     self.fc3 = nn.Linear(1024, 10)
+    #
+    # def forward(self, x):
+    #     x = F.relu(self.conv1(x))
+    #     x = self.pool1(x)
+    #     x = F.relu(self.conv2(x))
+    #     x = self.pool1(x)
+    #     x = self.dropout1(x)
+    #
+    #     x = F.relu(self.conv3(x))
+    #     x = self.pool1(x)
+    #     x = F.relu(self.conv4(x))
+    #     x = self.pool2(x)
+    #     x = self.dropout2(x)
+    #
+    #     x = self.flatten(x)
+    #     x = F.relu(self.fc1(x))
+    #     x = F.relu(self.fc2(x))
+    #     x = F.log_softmax(self.fc3(x), dim=1)
+    #     return x
+    def __init__(self, args): # 75% accuracy on test set
         super(CNNCifar, self).__init__()
-        self.conv1 = nn.Conv2d(3, 6, 5)
-        self.pool = nn.MaxPool2d(2, 2)
-        self.conv2 = nn.Conv2d(6, 16, 5)
-        self.fc1 = nn.Linear(16 * 5 * 5, 120)
-        self.fc2 = nn.Linear(120, 84)
-        self.fc3 = nn.Linear(84, args.num_classes)
+        self.conv1 = nn.Conv2d(3, 128, 3)
+        self.pool1 = nn.MaxPool2d(2, 2)
+        self.conv2 = nn.Conv2d(128, 128, 3)
+        self.pool2 = nn.MaxPool2d(2, 2)
+        self.conv3 = nn.Conv2d(128, 128, 3)
+        # self.pool3 = nn.MaxPool2d(2, 2)
+        # self.conv4 = nn.Conv2d(128, 128, 2)
+        self.fc1 = nn.Linear(128 * 26 * 26, 1024)
+        self.drop1 = nn.Dropout(0.2)
+        self.fc2 = nn.Linear(1024, 512)
+        self.drop2 = nn.Dropout(0.2)
+        self.fc3 = nn.Linear(512, args.num_classes)
+        self.flatten = nn.Flatten()
 
     def forward(self, x):
-        x = self.pool(F.relu(self.conv1(x)))
-        x = self.pool(F.relu(self.conv2(x)))
-        x = x.view(-1, 16 * 5 * 5)
+        x = self.pool1(F.relu(self.conv1(x)))
+        x = self.pool2(F.relu(self.conv2(x)))
+        x = self.pool2(F.relu(self.conv3(x)))
+        # x = self.pool3(F.relu(self.conv3(x)))
+        # x = F.relu(self.conv4(x))
+
+        # x = x.view(-1, 64 * 4 * 4)
+        x = self.flatten(x)
+
         x = F.relu(self.fc1(x))
+        x = self.drop1(x)
+
         x = F.relu(self.fc2(x))
+        x = self.drop2(x)
+
         x = self.fc3(x)
-        return F.log_softmax(x, dim=1)
+
+        return x
+
+
+class GNNStack(nn.Module):
+    def __init__(self, input_dim, hidden_dim, output_dim, task='node'):
+        super(GNNStack, self).__init__()
+        self.task = task
+        self.convs = nn.ModuleList()
+        self.convs.append(self.build_conv_model(input_dim, hidden_dim))
+        self.lns = nn.ModuleList()
+        self.lns.append(nn.LayerNorm(hidden_dim))
+        self.lns.append(nn.LayerNorm(hidden_dim))
+        for l in range(2):
+            self.convs.append(self.build_conv_model(hidden_dim, hidden_dim))
+
+        # post-message-passing
+        self.post_mp = nn.Sequential(
+            nn.Linear(hidden_dim, hidden_dim), nn.Dropout(0.25),
+            nn.Linear(hidden_dim, output_dim))
+        if not (self.task == 'node' or self.task == 'graph'):
+            raise RuntimeError('Unknown task.')
+
+        self.dropout = 0.25
+        self.num_layers = 3
+
+    def build_conv_model(self, input_dim, hidden_dim):
+        # refer to pytorch geometric nn module for different implementation of GNNs.
+        if self.task == 'node':
+            return pyg_nn.GCNConv(input_dim, hidden_dim)
+        else:
+            return pyg_nn.GINConv(nn.Sequential(nn.Linear(input_dim, hidden_dim),
+                                  nn.ReLU(), nn.Linear(hidden_dim, hidden_dim)))
+
+    def forward(self, data):
+        x, edge_index, batch = data.x, data.edge_index, data.batch
+        if data.num_node_features == 0:
+          x = torch.ones(data.num_nodes, 1)  # for node classification where you only have 1 graph
+
+        for i in range(self.num_layers):
+            x = self.convs[i](x, edge_index)
+            emb = x
+            x = F.relu(x)
+            x = F.dropout(x, p=self.dropout, training=self.training)
+            if not i == self.num_layers - 1:
+                x = self.lns[i](x)
+
+        if self.task == 'graph':
+            x = pyg_nn.global_mean_pool(x, batch)
+
+        x = self.post_mp(x)
+
+        return emb, F.log_softmax(x, dim=1)
+
+    def loss(self, pred, label):
+        return F.nll_loss(pred, label)
+
+class CNNFlower(nn.Module):
+    def __init__(self, args):
+        super(CNNFlower, self).__init__()
+        self.conv1 = nn.Conv2d(3, 64, 3)
+        self.pool = nn.MaxPool2d(2, 2)
+        self.conv2 = nn.Conv2d(64, 256, 3)
+
+    def forward(self, x):
+        x = F.relu()
+
+    # def __init__(self, args):
+    #     super(CNNCifar, self).__init__()
+    #     # Assuming img_rows, img_cols, and channels are defined elsewhere in the code
+    #     self.conv1 = nn.Conv2d(3, 64, kernel_size=3, padding=1)  # padding to maintain size
+    #     self.dropout1 = nn.Dropout(0.2)
+    #     self.conv2 = nn.Conv2d(64, 64, kernel_size=3, padding=1)  # padding to maintain size
+    #     self.dropout2 = nn.Dropout(0.2)
+    #     self.conv3 = nn.Conv2d(64, 64, kernel_size=3, padding=1)  # padding to maintain size
+    #     self.dropout3 = nn.Dropout(0.2)
+    #     self.flatten = nn.Flatten()
+    #     self.fc1 = nn.Linear(64 * 32 * 32, 128)  # adjust based on your image dimensions
+    #     self.fc2 = nn.Linear(128, args.num_classes)
+    #
+    # def forward(self, x):
+    #     x = F.relu(self.conv1(x))
+    #     x = self.dropout1(x)
+    #     x = F.relu(self.conv2(x))
+    #     x = self.dropout2(x)
+    #     x = F.relu(self.conv3(x))
+    #     x = self.dropout3(x)
+    #     x = self.flatten(x)
+    #     x = F.relu(self.fc1(x))
+    #     x = self.fc2(x)
+    #     return F.softmax(x, dim=1)
+
 
 class modelC(nn.Module):
     def __init__(self, input_size, n_classes=10, **kwargs):
-        super(AllConvNet, self).__init__()
+        super(modelC, self).__init__()
         self.conv1 = nn.Conv2d(input_size, 96, 3, padding=1)
         self.conv2 = nn.Conv2d(96, 96, 3, padding=1)
         self.conv3 = nn.Conv2d(96, 96, 3, padding=1, stride=2)

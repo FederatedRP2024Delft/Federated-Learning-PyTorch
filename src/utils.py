@@ -6,6 +6,11 @@ import copy
 import torch
 from torchvision import datasets, transforms
 from sampling import *
+# import torchtext.datasets as t_datasets
+# import torchtext.transforms as t_transforms
+# import torchtext.vocab as t_vocab
+# import torchtext.data as t_data
+
 
 
 def get_dataset(args):
@@ -18,13 +23,15 @@ def get_dataset(args):
         data_dir = '../data/cifar/'
         apply_transform = transforms.Compose(
             [transforms.ToTensor(),
-             transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])
+             transforms.Normalize((0.485, 0.456, 0.406),
+                                  (0.229, 0.224, 0.225))])  # 1 value per channel - 3 channels
 
         train_dataset = datasets.CIFAR10(data_dir, train=True, download=True,
                                        transform=apply_transform)
 
         test_dataset = datasets.CIFAR10(data_dir, train=False, download=True,
                                       transform=apply_transform)
+
 
         # sample training data amongst users
         if args.iid == 1:
@@ -41,15 +48,15 @@ def get_dataset(args):
                 # Chose euqal splits for every user
                 user_groups = cifar_noniid(train_dataset, args.num_users)
 
-    elif args.dataset == 'mnist' or 'fmnist':
+    elif args.dataset == 'mnist' or args.dataset == 'fmnist':
         if args.dataset == 'mnist':
             data_dir = '../data/mnist/'
         else:
             data_dir = '../data/fmnist/'
 
         apply_transform = transforms.Compose([
-            transforms.ToTensor(),
-            transforms.Normalize((0.1307,), (0.3081,))])
+            transforms.ToTensor(),  # convert images, nd arrays, or tensors to other tensors
+            transforms.Normalize((0.1307,), (0.3081,))])  # 1 value per channel - 1 channel
 
         train_dataset = datasets.MNIST(data_dir, train=True, download=True,
                                        transform=apply_transform)
@@ -71,19 +78,53 @@ def get_dataset(args):
             else:
                 # Chose euqal splits for every user
                 user_groups = mnist_noniid(train_dataset, args.num_users)
+    elif args.dataset == 'flower':
+        data_dir = '../data/flower/'
+
+        apply_transform = transforms.Compose([
+            transforms.ToTensor()
+        ])
+        train_dataset = datasets.Flowers102(data_dir, split='train', transform=apply_transform, download=True)
+        test_dataset = datasets.Flowers102(data_dir, split='val', transform=apply_transform, download=True)
+
+        if args.iid == 1:
+            # Sample IID user data from Mnist
+            user_groups = flower_iid(train_dataset, args.num_users)
+        elif args.iid == 2:
+            user_groups = split_dirichlet(train_dataset, args.num_users, is_cfar=False, beta=args.dirichlet)
+    # elif args.dataset == 'imdb':
+    #     data_dir = '../data/imdb/'
+    #
+    #     train_dataset = t_datasets.IMDB(data_dir, split='train')
+    #     test_dataset = t_datasets.IMDB(data_dir, split='test')
+    #     user_groups = split_dirichlet(train_dataset, args.num_users, is_cfar=False, beta=args.dirichlet)
+    #
+    #     print(train_dataset)
+    #
+    # elif args.dataset == 'yahoo':
+    #     data_dir = '../data/yahoo/'
+    #
+    #     train_dataset = t_datasets.YahooAnswers(data_dir, split='train')
+    #     test_dataset = t_datasets.YahooAnswers(data_dir, split='test')
+    #
+    #     print(train_dataset)
 
     return train_dataset, test_dataset, user_groups
 
 
-def average_weights(w):
+def average_weights(w, d: dict[int, int], total_dp: int):
     """
     Returns the average of the weights.
     """
     w_avg = copy.deepcopy(w[0])
+    total_local_dp = sum(d.values())
+    for key in w_avg.keys():
+        w_avg[key] = w[0][key] * (d[0]/total_local_dp)
+
     for key in w_avg.keys():
         for i in range(1, len(w)):
-            w_avg[key] += w[i][key]
-        w_avg[key] = torch.div(w_avg[key], len(w))
+            w_avg[key] += w[i][key] * (d[i]/total_local_dp)
+        # w_avg[key] = torch.div(w_avg[key], len(w))
     return w_avg
 
 

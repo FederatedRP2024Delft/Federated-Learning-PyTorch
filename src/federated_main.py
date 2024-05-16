@@ -15,8 +15,8 @@ from tensorboardX import SummaryWriter
 
 from options import args_parser
 from update import LocalUpdate, test_inference
-from models import MLP, CNNMnist, CNNFashion_Mnist, CNNCifar
-from utils import get_dataset, average_weights, exp_details
+from models import MLP, CNNMnist, CNNFashion_Mnist, CNNCifar, CNNFlower
+from utils import get_dataset, average_weights, exp_details, fed_avg
 
 
 if __name__ == '__main__':
@@ -29,9 +29,10 @@ if __name__ == '__main__':
     args = args_parser()
     exp_details(args)
 
-    if args.gpu:
-        torch.cuda.set_device(args.gpu)
-    device = 'cuda' if args.gpu else 'cpu'
+    # if args.gpu_id:
+    #     torch.cuda.set_device(args.gpu_id)
+    # device = 'cuda' if args.gpu else 'cpu'
+    device = 'cuda'
 
     # load dataset and user groups
     train_dataset, test_dataset, user_groups = get_dataset(args)
@@ -45,6 +46,8 @@ if __name__ == '__main__':
             global_model = CNNFashion_Mnist(args=args)
         elif args.dataset == 'cifar':
             global_model = CNNCifar(args=args)
+        elif args.dataset == 'flower':
+            global_model = CNNFlower(args=args)
 
     elif args.model == 'mlp':
         # Multi-layer preceptron
@@ -60,7 +63,7 @@ if __name__ == '__main__':
     # Set the model to train and send it to device.
     global_model.to(device)
     global_model.train()
-    print(global_model)
+    # print(global_model)
 
     # copy weights
     global_weights = global_model.state_dict()
@@ -72,24 +75,35 @@ if __name__ == '__main__':
     print_every = 2
     val_loss_pre, counter = 0, 0
 
+    # at every epoch, train clients, update global model, test accuracy of new global model
     for epoch in tqdm(range(args.epochs)):
-        local_weights, local_losses = [], []
+        local_weights, local_losses , local_datapoints = [], [], dict()
         print(f'\n | Global Training Round : {epoch+1} |\n')
 
         global_model.train()
         m = max(int(args.frac * args.num_users), 1)
         idxs_users = np.random.choice(range(args.num_users), m, replace=False)
-
+        # for every user, aggregate old model with new global one
+        dataset_size_per_client = [len(user_groups[i]) for i in idxs_users]
+        i = 0
         for idx in idxs_users:
             local_model = LocalUpdate(args=args, dataset=train_dataset,
                                       idxs=user_groups[idx], logger=logger)
             w, loss = local_model.update_weights(
                 model=copy.deepcopy(global_model), global_round=epoch)
+
+            # print(len(user_groups[idx]), len(w))
             local_weights.append(copy.deepcopy(w))
             local_losses.append(copy.deepcopy(loss))
+            local_datapoints[i] = len(user_groups[idx])
+            i += 1
 
         # update global weights
-        global_weights = average_weights(local_weights)
+        a = sum([len(ln) for ln in user_groups.values()])
+        print(a)
+        # total_datapoints = sum()
+        global_weights = average_weights(local_weights, local_datapoints, a)
+        # global_weights = fed_avg(local_weights, dataset_size_per_client)
 
         # update global weights
         global_model.load_state_dict(global_weights)
@@ -131,27 +145,27 @@ if __name__ == '__main__':
 
     print('\n Total Run Time: {0:0.4f}'.format(time.time()-start_time))
 
-    # PLOTTING (optional)
-    # import matplotlib
-    # import matplotlib.pyplot as plt
-    # matplotlib.use('Agg')
-
-    # Plot Loss curve
-    # plt.figure()
-    # plt.title('Training Loss vs Communication rounds')
-    # plt.plot(range(len(train_loss)), train_loss, color='r')
-    # plt.ylabel('Training loss')
-    # plt.xlabel('Communication Rounds')
-    # plt.savefig('../save/fed_{}_{}_{}_C[{}]_iid[{}]_E[{}]_B[{}]_loss.png'.
-    #             format(args.dataset, args.model, args.epochs, args.frac,
-    #                    args.iid, args.local_ep, args.local_bs))
-    #
-    # # Plot Average Accuracy vs Communication rounds
-    # plt.figure()
-    # plt.title('Average Accuracy vs Communication rounds')
-    # plt.plot(range(len(train_accuracy)), train_accuracy, color='k')
-    # plt.ylabel('Average Accuracy')
-    # plt.xlabel('Communication Rounds')
-    # plt.savefig('../save/fed_{}_{}_{}_C[{}]_iid[{}]_E[{}]_B[{}]_acc.png'.
-    #             format(args.dataset, args.model, args.epochs, args.frac,
-    #                    args.iid, args.local_ep, args.local_bs))
+# PLOTTING (optional)
+# import matplotlib
+# import matplotlib.pyplot as plt
+# matplotlib.use('Agg')
+#
+# # Plot Loss curve
+# plt.figure()
+# plt.title('Training Loss vs Communication rounds')
+# plt.plot(range(len(train_loss)), train_loss, color='r')
+# plt.ylabel('Training loss')
+# plt.xlabel('Communication Rounds')
+# plt.savefig('../save/fed_{}_{}_{}_C[{}]_iid[{}]_E[{}]_B[{}]_loss.png'.
+#             format(args.dataset, args.model, args.epochs, args.frac,
+#                    args.iid, args.local_ep, args.local_bs))
+#
+# # Plot Average Accuracy vs Communication rounds
+# plt.figure()
+# plt.title('Average Accuracy vs Communication rounds')
+# plt.plot(range(len(train_accuracy)), train_accuracy, color='k')
+# plt.ylabel('Average Accuracy')
+# plt.xlabel('Communication Rounds')
+# plt.savefig('../save/fed_{}_{}_{}_C[{}]_iid[{}]_E[{}]_B[{}]_acc.png'.
+#             format(args.dataset, args.model, args.epochs, args.frac,
+#                    args.iid, args.local_ep, args.local_bs))
